@@ -400,9 +400,8 @@ class sprof:
         Determine which active sensors the float has for the selected profile.
         Fill internal variable __sensors__ (list) and return it.
         '''
-        path = self.argo_path + "/" + str(self.WMO) + "/" + str(self.WMO) + "_Sprof.nc"
-        ncin = netCDF4.Dataset(path, 'r')
-    
+        ncin = netCDF4.Dataset(self.__Sprof__, 'r')
+
         param = ncin['STATION_PARAMETERS'][:]
         ncin.close()
         
