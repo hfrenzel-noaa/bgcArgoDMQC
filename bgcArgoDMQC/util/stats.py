@@ -70,7 +70,7 @@ def bic(n_chpts, resid):
 
     # valid data parameters? see Jones & Day (1995)
     is_valid = n/4 - 1
-    if n_chpts > is_valid: # pragma: no cover
+    if n_chpts > is_valid: 
         bic_value = np.nan
         sys.stdout.write('n >> K, cannot caclculate BIC, setting BIC = NaN\n')
     else:
