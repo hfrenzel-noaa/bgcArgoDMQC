@@ -40,7 +40,7 @@ def aic(data, resid):
     return aic_value
 
 
-def bic(data, resid):
+def bic(n_chpts, resid):
     '''
     Function to calculate the Bayesian Information Criteria (BIC) as a metric
     for assessing the appropriate number of breakpoints in the calculation of
@@ -59,19 +59,18 @@ def bic(data, resid):
     code, available via https://github.com/SOCCOM-BGCArgo/ARGO_PROCESSING,
     written by Tanya Maurer & Josh Plant
     
-    Last update: 2020-10-27
+    Last update: 2025-07-14 By Josephine Pikowski
     '''
 
     # calculate BIC
     errorlim = 0 # cap on residuals, useful for noisy pH and nitrate data
     SSE = np.sum(resid**2) # sum square errors
     n = resid.shape[0]
-    m = data.shape[0] - 1 # do not include first cycle
-    K = 2*m + 2
+    K = (n_chpts + 2) * 2
 
     # valid data parameters? see Jones & Day (1995)
     is_valid = n/4 - 1
-    if m > is_valid: # pragma: no cover
+    if n_chpts > is_valid: 
         bic_value = np.nan
         sys.stdout.write('n >> K, cannot caclculate BIC, setting BIC = NaN\n')
     else:
