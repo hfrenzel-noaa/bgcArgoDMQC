@@ -8,6 +8,7 @@ from .. import unit
 from .. import util
 from .. import plot
 from .. import io
+from .. import core
 
 class sprof:
     '''
@@ -410,3 +411,46 @@ class sprof:
         for i in range(nvar):
             self.__sensors__.append(param[prof_idx,i,:].tobytes().decode().strip())
         return self.__sensors__      
+
+    def calc_adjustments(self, var = 'NITRATE', ref = 'EsperLIR', ref_depth = 1500., threshold = 30, verbose=True):
+        '''
+        Args:
+             var: The variable that will be adjusted (NO3 or pH). Default nitrate
+             ref (str): Reference dataset to use (esper_estimated). Default EsperLIR
+             ref_depth(float): Depth of the data (for comparison). Default 1500 dbar
+             verbose (bool): Whether to print progress and status messages
+         
+         Returns:
+             adjusted_values (array): Adjusted variable vals
+        '''
+    
+        #Check if the variable is an active sensor in the float
+        active_sensors = self.get_sensors(prof_idx=0)
+        if var not in active_sensors:
+            raise ValueError(f"Sensor '{var}' not found in profile. Available sensors: {active_sensors}")
+    
+        if verbose:
+            print(f"Estimating {var} using method: {ref}")
+    
+            ncin = netCDF4.Dataset(self.__Sprof__, 'r')
+            
+        (self.__var_org_data__, self.__ref_data__, self.__estimated_vals__,
+         self.__changepoints__, self.__coef_df__, self.__adjusted_vals__) = core.calc_adjustment(
+            ncin, var=var, method=ref, ref_depth=ref_depth,
+            threshold=threshold, verbose=verbose
+        )
+    
+        self.adjusted_values = self.__adjusted_vals__
+    
+    
+        # Get filtered var values and Julian days
+        var_vals = self.__var_org_data__[:, 0]
+        julian_days = self.__var_org_data__[:, 1]
+
+    
+        # Plot adjustment 
+        if verbose:
+            plot.plot_no3_adj(julian_days, var_vals, self.__estimated_vals__, self.__changepoints__)
+            plot.plot_adjusted(self.adjusted_values, var)
+        
+        return copy.deepcopy(self.adjusted_values)
