@@ -977,7 +977,7 @@ def calc_adjustment(data, var='NITRATE', method='EsperLIR', ref_depth=1500, thre
     #Subset float values near reference depth
     var_org_data = __filter_var_data__(data, var=var, ref_depth=ref_depth, threshold=threshold)
     if verbose:
-        print(f"Filtered original variable data near depth {ref_depth} ± {threshold} m")
+        print(f"Filtered original {var} data near depth {ref_depth} ± {threshold} m")
     
     # Prepare reference data for PyEsper input
     ref_data = __filter_ref_data__(data, ref_depth=ref_depth, threshold=threshold)
