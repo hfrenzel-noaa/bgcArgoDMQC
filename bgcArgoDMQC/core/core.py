@@ -674,6 +674,7 @@ def range_check(key, floatdict, verbose=True):
             TEMP=(-2.5, 40),
             PSAL=(2, 41),
             DOXY=(-5, 600),
+            NITRATE=(-15, 65)
         )
 
     cleandict = copy.deepcopy(floatdict)
@@ -732,7 +733,7 @@ def __filter_var_data__(data, var='NITRATE', ref_depth=1500, threshold=30):
         var_profile = var_data[profile, :]  #selecting the whole row of var data
         
         valid_var_data = ~np.isnan(var_profile) #removing NaN vals from the var data
-        #find pressure values near 1500 dbar within the 30 dbar threshold
+        #find pressure values near the reference depth within the threshold
         pressure_near_depth = np.abs(pres_profile - ref_depth) <= threshold #all positive, calculates how far each value is from ref_depth 
         valid_mask = valid_var_data & pressure_near_depth #combine both into one mask
         
@@ -748,20 +749,20 @@ def __filter_var_data__(data, var='NITRATE', ref_depth=1500, threshold=30):
 # Extracting a subset of the data for PyEsper 
 def __filter_ref_data__(data, var = 'DOXY', ref_depth = 1500, threshold = 30):
     '''
-    Returns an array with (julian_day, latitude, longitude, temp, sal, variable_value)
+    Returns an array with (julian_day, latitude, longitude, temp, psal, variable_value)
     at the pressure closest to ref_depth for each profile.
     '''
     var = data[var][:] #reference for the rest
     jul = data['JULD'][:] #Julian Day
     pres = data['PRES'][:] #Pressure
     temp = data['TEMP'][:] #TEMP    
-    sal = data['PSAL'][:] #PSAL
+    psal = data['PSAL'][:] #PSAL
     long = data['LONGITUDE'][:] #LONGITUDE
     lat = data['LATITUDE'][:] #LATITUDE
     
     closest_multi_vars = []
     
-    for profile in range(var.shape[0]):  #looping through the 39 profiles
+    for profile in range(var.shape[0]):  #looping through the profiles
         #grabbing the pressure & var data for the current interation of the profile
         pres_profile = pres[profile, :]  #selecting the whole row of pressure data
         variable_profile = var[profile, :]  #selecting the whole row of var data
@@ -777,14 +778,14 @@ def __filter_ref_data__(data, var = 'DOXY', ref_depth = 1500, threshold = 30):
             depth_idx = valid_indices[closest_idx]   #finding matching depth index
             matched_var = float(variable_profile[depth_idx])
             matched_temp = float(temp[profile, depth_idx])
-            matched_sal = float(sal[profile, depth_idx])
+            matched_psal = float(psal[profile, depth_idx])
             matched_pres = float(pres[profile, depth_idx])
 
             base_date = datetime.datetime(1950, 1, 1)
             date = base_date + datetime.timedelta(days=float(jul[profile]))# pulling year from julian day
             year = date.year
             
-            #adding the closest vals to the closest dict
+            #adding the closest vals to the closest_multi_vars dict
             closest_multi_vars.append((
                 year,
                 float(jul[profile]),
@@ -792,7 +793,7 @@ def __filter_ref_data__(data, var = 'DOXY', ref_depth = 1500, threshold = 30):
                 float(long[profile]),
                 matched_pres,
                 matched_temp,
-                matched_sal,
+                matched_psal,
                 matched_var
             ))
 
@@ -849,12 +850,14 @@ def __find_changepoints__(filtered_data):
 
     #max changepoints - ruptures has a minimum of 2 so it is just making sure it doesn't break
     max_possible_chpts = n // min_size - 1
-    maxN = max(1, min(max_possible_chpts, round(n / 4 - 1)))
+    max_cp = max(1, min(max_possible_chpts, round(n / 4 - 1)))
 
     best_bic = np.inf
     best_chpts = []
-
-    for chpt in range(1, maxN + 1):  # start from 1 to avoid no-breakpoint case
+    bic_history = []  #BICs for each chpt count
+    if_chpt = True
+    
+    for chpt in range(1, max_cp + 1):  # start from 1 to avoid no-breakpoint case
         segment_length = n / (chpt + 1)
         if segment_length < min_size:
             continue  # skip if segments would be too short for ruptures 
@@ -884,7 +887,16 @@ def __find_changepoints__(filtered_data):
             best_bic = bic_value
             best_chpts = change_points
 
-    return best_chpts, best_bic
+        bic_history.append((chpt, bic_value))
+
+    if not best_chpts:
+        print('No changepoints detected: default to first and last cycle.')
+        if_chpt = False
+        best_chpts = [0, n - 1]
+        
+    bic_history = np.array(bic_history, dtype = float)
+
+    return best_chpts, best_bic, bic_history, if_chpt
 
 def __calc_coefficients__(julian_day, orig_variable, change_points):
     reference_value = 43
@@ -927,7 +939,7 @@ def __calc_coefficients__(julian_day, orig_variable, change_points):
     return coefficients_df
 
 
-def __update_field__(coefficients_df, jul_day, original_var_data, gain = 1.0):
+def __adj_vals__(coefficients_df, jul_day, original_var_data, gain = 1.0):
     '''
     Calculates the adjusted values using the equation: var_adj=[variable-[offset + drift(JULD-JULD_PIVOT)/365]]/gain. 
     Returns adjusted values array.
@@ -955,6 +967,35 @@ def __update_field__(coefficients_df, jul_day, original_var_data, gain = 1.0):
 
     return adjusted_vals
 
+def __compute_field__(data, coefficients_df, var = 'NITRATE', gain=1.0):
+    '''
+    Applies drift-offset correction to all variable data.
+    Returns array of full adjusted profile values.
+    '''
+    var_data = data[var][:] #reading in the data 
+    jul_data = data['JULD'][:] # Julian Day
+
+    n_profiles, n_depths = var_data.shape #gets number of profiles to loop through
+    full_var_adjusted = np.full_like(var_data, fill_value=np.nan, dtype=float) #create an empty float array
+
+    for i in range(len(coefficients_df)):
+        #making the different segments
+        start = coefficients_df.loc[i, "cycle"]
+        end = coefficients_df.loc[i + 1, "cycle"] if i < len(coefficients_df) - 1 else n_profiles
+        pivot = jul_data[start]
+        drift = coefficients_df.loc[i, "drift"]
+        offset = coefficients_df.loc[i, "offset"]
+
+        #going through each profile
+        for j in range(start, end):
+            if np.all(np.isnan(var_data[j, :])):
+                continue  # skip entirely masked profiles
+            time = (jul_data[j] - pivot) / 365
+            correction = offset + drift * time
+            full_var_adjusted[j, :] = (var_data[j, :] - correction) / gain
+
+    return full_var_adjusted
+
 def calc_adjustment(data, var='NITRATE', method='EsperLIR', ref_depth=1500, threshold=30, verbose=True):
     '''
     Args:
@@ -971,7 +1012,8 @@ def calc_adjustment(data, var='NITRATE', method='EsperLIR', ref_depth=1500, thre
             estimated_vals: Array of Esper-estimated variable values
             changepoints: List of changepoint indices
             coef_df: DataFrame of model coefficients (drift, offset)
-            adjusted_vals: Final adjusted time series
+            adjusted_vals: Final adjusted values (one per profile)
+            full_var_adjusted: Array of full adjusted profile values
     '''
 
     #Subset float values near reference depth
@@ -998,7 +1040,7 @@ def calc_adjustment(data, var='NITRATE', method='EsperLIR', ref_depth=1500, thre
     org_var = var_org_data[:, 0]
     
     #Find the change points
-    changepoints, bic_val = __find_changepoints__(org_var)
+    changepoints, bic_val, bic_history, if_chpt = __find_changepoints__(org_var)
 
     #Calculate the coefficients 
     coef_df = __calc_coefficients__(jul_days, org_var, changepoints)
@@ -1006,8 +1048,9 @@ def calc_adjustment(data, var='NITRATE', method='EsperLIR', ref_depth=1500, thre
         print(f"Detected {changepoints} changepoints; BIC = {bic_val:.2f}")
 
     #Calculate the adjusted values
-    adjusted_vals = __update_field__(coef_df, jul_days, org_var, gain = 1.0)
+    adjusted_vals = __adj_vals__(coef_df, jul_days, org_var, gain = 1.0)
+    full_var_adjusted = __compute_field__(data, coef_df, var, gain = 1.0)
     if verbose:
         print("Adjustment process complete")
 
-    return var_org_data, ref_data, estimated_vals, changepoints, coef_df, adjusted_vals
+    return var_org_data, ref_data, estimated_vals, changepoints, bic_history, if_chpt, coef_df, adjusted_vals, full_var_adjusted
