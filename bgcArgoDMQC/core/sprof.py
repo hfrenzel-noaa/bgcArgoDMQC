@@ -52,8 +52,10 @@ class sprof:
         if not keep_fillvalue:
             self.rm_fillvalue()
 
+        self.sensors = self.__get_sensors__(prof_idx=0)
+        
         if rcheck:
-            self.check_range('DOXY')
+            self.check_range('all')
 
     def __getitem__(self, index):
         return pd.Series(self.__floatdict__[index])
@@ -122,7 +124,7 @@ class sprof:
         variables.
         '''
         if key == 'all':
-            key = ['PRES', 'TEMP', 'PSAL', 'DOXY']
+            key = ['PRES', 'TEMP', 'PSAL', 'DOXY'] #change to get sensors
         elif type(key) is not list:
             key = [key]
         
@@ -396,7 +398,7 @@ class sprof:
         g = plot.compare_independent_data(self.df, self.WMO, plot_dict, meta_dict, fmt=fmt)
         return g
 
-    def get_sensors(self, prof_idx=0):
+    def __get_sensors__(self, prof_idx=0):
         '''
         Determine which active sensors the float has for the selected profile.
         Fill internal variable __sensors__ (list) and return it.
@@ -425,9 +427,9 @@ class sprof:
         '''
     
         #Check if the variable is an active sensor in the float
-        active_sensors = self.get_sensors(prof_idx=0)
-        if var not in active_sensors:
-            raise ValueError(f"Sensor '{var}' not found in profile. Available sensors: {active_sensors}")
+        __sensors__ = self.sensors
+        if var not in __sensors__:
+            raise ValueError(f"Sensor '{var}' not found in profile. Available sensors: {__sensors__}")
     
         if verbose:
             print(f"Estimating {var} using method: {ref}")
@@ -435,22 +437,24 @@ class sprof:
             ncin = netCDF4.Dataset(self.__Sprof__, 'r')
             
         (self.__var_org_data__, self.__ref_data__, self.__estimated_vals__,
-         self.__changepoints__, self.__coef_df__, self.__adjusted_vals__) = core.calc_adjustment(
+         self.__changepoints__, self.__bic_history__, self.__if_chpt__, self.__coef_df__, self.__adjusted_vals__, self.__full_var_adjusted__) = core.calc_adjustment(
             ncin, var=var, method=ref, ref_depth=ref_depth,
             threshold=threshold, verbose=verbose
         )
-    
+
         self.adjusted_values = self.__adjusted_vals__
-    
+        self.full_var_adjusted = self.__full_var_adjusted__
     
         # Get filtered var values and Julian days
         var_vals = self.__var_org_data__[:, 0]
         julian_days = self.__var_org_data__[:, 1]
 
-    
         # Plot adjustment 
         if verbose:
+            if self.__if_chpt__ == True:
+                plot.plot_bic(self.__bic_history__)
             plot.plot_no3_adj(julian_days, var_vals, self.__estimated_vals__, self.__changepoints__)
-            plot.plot_adjusted(self.adjusted_values, var)
+            plot.plot_adjusted(self.adjusted_values, self.__estimated_vals__, var)
+            plot.plot_full_dmqc_adjustment_no3(ncin, self.full_var_adjusted, var, ref_depth, threshold)
         
-        return copy.deepcopy(self.adjusted_values)
+        return copy.deepcopy(self.full_var_adjusted)
