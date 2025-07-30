@@ -1,9 +1,11 @@
 import numpy as np
+import math
 
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import datetime
 from matplotlib.offsetbox import AnchoredText
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 import seaborn as sns
 sns.set_theme(style='ticks', context='paper', palette='colorblind')
@@ -524,15 +526,102 @@ def plot_no3_adj(julian_day, orig_var_data, estimated_var_data, change_points):
     plt.show()
 
 #Plot adjusted var vals
-def plot_adjusted(adj_vals, var='NITRATE'):
+def plot_adjusted(adj_vals, estimated_vals, var='NITRATE'):
+    '''
+    Plotting the comparison of the adjusted values to the Esper estimate values.
+    '''
     plt.figure(figsize=(10, 5))
-    plt.scatter(range(len(adj_vals)), adj_vals, marker='s', color='red', edgecolors='black', alpha=0.8)    
-    plt.xlabel("Profile Index", fontsize=12)
+    #Plotting adjusted vals
+    plt.scatter(range(len(adj_vals)), adj_vals, marker='s', color='red', edgecolors='black', alpha=0.8, label='Adjusted Values') 
+
+    #Plotting estimated vals
+    plt.scatter(range(len(estimated_vals)), estimated_vals, marker='s', color='steelblue', edgecolors='black', alpha=0.8, label='Estimated Values')    
+
+    plt.xlabel('Profile Index', fontsize=12)
     if var == 'NITRATE':
-        plt.ylabel('Adjusted Nitrate (µmol/kg)', fontsize=12)
-        plt.ylim(42, 48)
+        plt.ylabel('Nitrate (µmol/kg)', fontsize=12)
+        # Calculate floor and ceiling of the y values
+        y_min = math.floor(adj_vals.min())
+        y_max = math.ceil(adj_vals.max())
+        
+        # Set y-axis limits
+        plt.ylim(y_min, y_max)
+
     if var == 'PH_IN_SITU_TOTAL':
         plt.ylabel('Adjusted pH', fontsize=12)
+        
     plt.grid(True)
     plt.tick_params(axis='both', labelsize=12)
+    plt.legend(fontsize=12)
+    plt.show()
+
+def plot_full_dmqc_adjustment_no3(data, full_var_adjusted, var='NITRATE', ref_depth = 1500, threshold = 30):
+    '''
+    Plots raw vs DMQC-adjusted variable with pressure and profile cycle coloring.
+    ONLY NITRATE
+    '''
+    var_data = data[var][:]
+    pres = data['PRES'][:]
+    n_profiles = var_data.shape[0]
+    profile_index = np.arange(1, n_profiles + 1)
+
+    # Raw data 
+    flat_raw = var_data.flatten()
+    flat_pres = pres.flatten()
+    flat_idx = np.repeat(profile_index, pres.shape[1])
+    valid_raw = ~np.isnan(flat_raw) & ~np.isnan(flat_pres)
+
+    raw_var = flat_raw[valid_raw]
+    pressure_raw = flat_pres[valid_raw]
+    profile_raw = flat_idx[valid_raw]
+
+    # Adjusted data 
+    flat_adj = full_var_adjusted.flatten()
+    flat_idx_adj = np.repeat(profile_index, pres.shape[1])
+    valid_adj = ~np.isnan(flat_adj) & ~np.isnan(flat_pres)
+
+    adj_var = flat_adj[valid_adj]
+    pressure_adj = flat_pres[valid_adj]
+    profile_adj = flat_idx_adj[valid_adj]
+
+    # Create plots
+    fig, axs = plt.subplots(1, 2, figsize=(8, 5))
+    divider = make_axes_locatable(axs[1])
+    cax = divider.append_axes("right", size="5%", pad=0.1)
+
+    sc1 = axs[0].scatter(raw_var, pressure_raw, c=profile_raw, cmap='viridis', alpha=0.7)
+    sc2 = axs[1].scatter(adj_var, pressure_adj, c=profile_adj, cmap='viridis', alpha=0.7)
+
+    for ax in axs:
+        ax.invert_yaxis()
+        ax.axhline(ref_depth, color='red', linestyle='--', linewidth=1.2, label='Reference Depth')
+        ax.axhspan(ref_depth - threshold, ref_depth + threshold, color='red', alpha=0.1, label='Drift Zone ±30 dbar')
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc='lower left')
+
+    axs[0].set_title('Original Nitrate')
+    axs[0].set_xlabel('Nitrate (µmol/kg)')
+    axs[0].set_ylabel('Pressure (dbar)')
+
+    axs[1].set_title('DMQC Adjusted Nitrate')
+    axs[1].set_xlabel('Nitrate (µmol/kg)')
+    axs[1].tick_params(axis='y', left=False, labelleft=False)
+    axs[1].set_ylabel('')
+
+    fig.colorbar(sc2, cax=cax, label='Profile Cycle Number',
+                 ticks=np.linspace(profile_index.min(), profile_index.max(), num=10, dtype=int))
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_bic(bic_history):
+    num_chpts = bic_history[:,0]
+    bic_scores = bic_history[:,1]
+    
+    plt.figure(figsize=(8, 5))
+    plt.plot(num_chpts, bic_scores, marker='o', color='darkorange', markersize=3)
+    plt.ylabel('BIC Score', fontsize=13)
+    plt.xlabel('Number of Change Points', fontsize=13)
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout()
     plt.show()
