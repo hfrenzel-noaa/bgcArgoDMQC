@@ -475,54 +475,58 @@ def plot_no3_adj(julian_day, orig_var_data, estimated_var_data, change_points):
                 edgecolors='black', alpha=0.8, label="Estimated Nitrate Data")
 
     # check change points
-    valid_cps = [int(cp) for cp in change_points if isinstance(cp, (int, np.integer)) and 0 <= cp < len(julian_day)]
+    valid_cps = sorted([cp for cp in change_points if isinstance(cp, (int, np.integer)) and 0 <= cp < len(julian_day)])
     if not valid_cps:
         raise ValueError("No valid change points provided.")
 
+    slope_lines = []
+    
     # change point lines
-    for cp in valid_cps:
-        cp_date = datetime.datetime(1950, 1, 1) + datetime.timedelta(days=julian_day[cp])
-        cp_numeric = mdates.date2num(cp_date)
-        plt.axvline(x=cp_numeric, color='black', linestyle="--", label="Change Point")
+    if valid_cps[-1] != len(julian_day) - 1:
+        valid_cps.append(len(julian_day))
+  
+    for i in range(1, len(valid_cps) - 1):  # Skip first and last
+        cp = valid_cps[i]
+        if cp < len(julian_day):
+            cp_day = julian_day[cp]
+            cp_date = datetime.datetime(1950, 1, 1) + datetime.timedelta(days=cp_day)
+            cp_numeric = mdates.date2num(cp_date)
+    
+            plt.axvline(x=cp_numeric, color='orange', linestyle="--", linewidth=1.5, label="Change Point")
 
     #Before first change point
-    cp0 = valid_cps[0]
-    before_cp_time = julian_day[:cp0]
-    before_cp_var = orig_var_data[:cp0]
-    if len(before_cp_time) >= 2:
-        m1, b1 = np.polyfit(before_cp_time, before_cp_var, 1)
-        y_fit_before = m1 * np.array(before_cp_time) + b1
-        before_dates = mdates.date2num([datetime.datetime(1950, 1, 1) + datetime.timedelta(days=j)
-                                        for j in before_cp_time])
-        plt.plot(before_dates, y_fit_before, color='green', label="Before Change")
+    colors = ['green', 'red', 'purple', 'pink', 'blue']  # Add more if needed
+    for i in range(len(valid_cps) - 1):
+        start = valid_cps[i]
+        end = valid_cps[i + 1]
+        if end - start >= 2:
+            segment_time = julian_day[start:end]
+            segment_var = orig_var_data[start:end]
+            m, b = np.polyfit(segment_time, segment_var, 1)
+            y_fit = m * np.array(segment_time) + b
+            segment_dates = mdates.date2num([datetime.datetime(1950, 1, 1) + datetime.timedelta(days=d) for d in segment_time])
+            color = colors[i % len(colors)]  # Cycles through colors if segments > color list
+            plt.plot(segment_dates, y_fit, color=color, linewidth=2, label=f"Segment {start}-{end}")
+            slope_lines.append(f"{start}-{end}: {m:.2f}")
 
-    #after last change point
-    cp_last = valid_cps[-1]
-    after_cp_time = julian_day[cp_last:]
-    after_cp_var = orig_var_data[cp_last:]
-    if len(after_cp_time) >= 2:
-        m2, b2 = np.polyfit(after_cp_time, after_cp_var, 1)
-        y_fit_after = m2 * np.array(after_cp_time) + b2
-        after_dates = mdates.date2num([datetime.datetime(1950, 1, 1) + datetime.timedelta(days=j)
-                                       for j in after_cp_time])
-        plt.plot(after_dates, y_fit_after, color='red', label="After Change")
-
-    #LBF for estimated data
+    # Fit for estimated data
     m3, b3 = np.polyfit(julian_day, estimated_var_data, 1)
     y_fit_est = m3 * np.array(julian_day) + b3
-    plt.plot(jul_numeric, y_fit_est, color='steelblue', linestyle='-', linewidth=1.8, label="Estimated Fit")
+    plt.plot(jul_numeric, y_fit_est, color='steelblue', linewidth=1.8, label="Estimated Fit")
 
-    slope_text = f"Slopes:\nBefore: {float(m1):.2f}\nAfter: {float(m2):.2f}"
-    plt.annotate(slope_text, xy=(0.3, 0.86), xycoords='axes fraction',
-                 fontsize=12, color='darkslategray', ha='left',
-                 bbox=dict(boxstyle="round,pad=0.3", facecolor='whitesmoke', edgecolor='gray'))
+    #annotate slopes
+    if slope_lines:
+        slope_text = "Slopes:\n" + "\n".join(slope_lines)
+        plt.annotate(slope_text, xy=(0.3, 0.86), xycoords='axes fraction',
+                     fontsize=12, color='darkslategray', ha='left',
+                     bbox=dict(boxstyle="round,pad=0.3", facecolor='whitesmoke', edgecolor='gray'))
 
     plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     plt.ylabel("Nitrate (µmol/kg)", fontsize=14)
     plt.legend(fontsize=12)
     plt.grid(True, color='gray', linewidth=0.3)
-    plt.tight_layout()
     plt.tick_params(axis='both', labelsize=13)
+    plt.tight_layout()
     plt.show()
 
 #Plot adjusted var vals

@@ -893,12 +893,17 @@ def __find_changepoints__(filtered_data):
         print('No changepoints detected: default to first and last cycle.')
         if_chpt = False
         best_chpts = [0, n - 1]
-        
+
+    best_chpts = sorted(set([0] + best_chpts))
+
     bic_history = np.array(bic_history, dtype = float)
 
     return best_chpts, best_bic, bic_history, if_chpt
 
 def __calc_coefficients__(julian_day, orig_variable, change_points):
+    '''
+    Calculate offset and drift for segmented data. Returns data frame.
+    '''
     reference_value = 43
     cycle_list = []
     offset_list = []
@@ -926,10 +931,21 @@ def __calc_coefficients__(julian_day, orig_variable, change_points):
             m2, b2 = np.polyfit(after_cp_time, after_cp_var, 1)
             drift_after = m2 * 365
             offset_after = (b2 + after_cp_time[0] * m2) - reference_value
+            # Save values for final profile calculation
+            saved_m2 = m2
+            saved_b2 = b2
             cycle_list.append(cp)
             offset_list.append(offset_after)
             drift_list.append(drift_after)
 
+    #last profile
+    cp_last = change_points[-1]
+    drift_final = 0.0  #has no slope
+    offset_final = (saved_b2 + julian_day[len(orig_variable)-1] * saved_m2) - reference_value
+    cycle_list.append(cp_last)
+    offset_list.append(offset_final)
+    drift_list.append(drift_final)
+    
     coefficients_df = pd.DataFrame({
         "cycle": cycle_list,
         "offset": offset_list,
@@ -938,24 +954,29 @@ def __calc_coefficients__(julian_day, orig_variable, change_points):
 
     return coefficients_df
 
-
 def __adj_vals__(coefficients_df, jul_day, original_var_data, gain = 1.0):
     '''
     Calculates the adjusted values using the equation: var_adj=[variable-[offset + drift(JULD-JULD_PIVOT)/365]]/gain. 
     Returns adjusted values array.
     '''
     adjusted_vals = np.zeros_like(original_var_data, dtype=float)
+    n = len(jul_day)
 
     #go through each segment
     for i in range(len(coefficients_df)):
+        start = coefficients_df.loc[i, "cycle"]
+        #start if it exceeds bounds
+        if start >= n:
+            continue
+        end = (
+            coefficients_df.loc[i + 1, "cycle"]
+            if i < len(coefficients_df) - 1
+            else n
+        )
+        #end to stay within bounds
+        end = min(end, n)
+        
         #range is len of segment from coef_df cycle
-        if i < len(coefficients_df) - 1:
-            start = coefficients_df.loc[i, "cycle"]
-            end = coefficients_df.loc[i + 1, "cycle"]
-        else:
-            start = coefficients_df.loc[i, "cycle"]
-            end = len(jul_day)
-
         pivot = jul_day[start]
         drift = coefficients_df.loc[i, "drift"]
         offset = coefficients_df.loc[i, "offset"]
@@ -981,7 +1002,11 @@ def __compute_field__(data, coefficients_df, var = 'NITRATE', gain=1.0):
     for i in range(len(coefficients_df)):
         #making the different segments
         start = coefficients_df.loc[i, "cycle"]
+        if start >= n_profiles:
+            continue  # skip invalid start index
         end = coefficients_df.loc[i + 1, "cycle"] if i < len(coefficients_df) - 1 else n_profiles
+        end = min(end, n_profiles)  # clip to bounds
+
         pivot = jul_data[start]
         drift = coefficients_df.loc[i, "drift"]
         offset = coefficients_df.loc[i, "offset"]
