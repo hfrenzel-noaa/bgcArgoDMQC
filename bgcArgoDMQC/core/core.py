@@ -726,16 +726,15 @@ def __filter_var_data__(data, var='NITRATE', ref_depth=1500, threshold=30):
     var_data = data[var][:] #reading in the data 
     pres_data = data['PRES'][:]#Pressure
     jul_data = data['JULD'][:] # Julian Day
-    
+
     for profile in range(var_data.shape[0]):  #looping through profiles
         #grabbing the pressure & var data for the current interation of the profile
         pres_profile = pres_data[profile, :]  #selecting the whole row of pressure data
         var_profile = var_data[profile, :]  #selecting the whole row of var data
         
-        valid_var_data = ~np.isnan(var_profile) #removing NaN vals from the var data
         #find pressure values near the reference depth within the threshold
         pressure_near_depth = np.abs(pres_profile - ref_depth) <= threshold #all positive, calculates how far each value is from ref_depth 
-        valid_mask = valid_var_data & pressure_near_depth #combine both into one mask
+        valid_mask = ~var_profile.mask & pressure_near_depth #combine both into one mask
         
         if np.any(valid_mask):  # Ensure there are valid matches
             pressure_differences = np.abs(pres_profile[valid_mask] - ref_depth) #finding the difference from ref_depth in an array
@@ -747,7 +746,7 @@ def __filter_var_data__(data, var='NITRATE', ref_depth=1500, threshold=30):
     return np.array(closest_vals)
 
 # Extracting a subset of the data for PyEsper 
-def __filter_ref_data__(data, var = 'DOXY', ref_depth = 1500, threshold = 30):
+def __filter_ref_data__(data, float_juld, var = 'DOXY', ref_depth = 1500, threshold = 30):
     '''
     Returns an array with (julian_day, latitude, longitude, temp, psal, variable_value)
     at the pressure closest to ref_depth for each profile.
@@ -761,15 +760,20 @@ def __filter_ref_data__(data, var = 'DOXY', ref_depth = 1500, threshold = 30):
     lat = data['LATITUDE'][:] #LATITUDE
     
     closest_multi_vars = []
-    
+   
     for profile in range(var.shape[0]):  #looping through the profiles
+        # some profiles have pressure values near the reference depth, but no
+        # matching variable (e.g., nitrate) data
+        if np.min(np.abs(jul[profile] - float_juld)) > 0.001:
+            print(f'no matching nitrate data for JULD={jul[profile]}') # DEBUG
+            continue
         #grabbing the pressure & var data for the current interation of the profile
         pres_profile = pres[profile, :]  #selecting the whole row of pressure data
         variable_profile = var[profile, :]  #selecting the whole row of var data
         
-        valid_variable = ~np.isnan(variable_profile) #removing NaN vals from the var data
-        pressure_near_ref = np.abs(pres_profile - ref_depth) <= threshold #find pressure values near ref_depth within the threshold 
-        valid_mask = valid_variable & pressure_near_ref #combine both into one mask
+        #find pressure values near ref_depth within the threshold
+        pressure_near_ref = np.abs(pres_profile - ref_depth) <= threshold
+        valid_mask = ~variable_profile.mask & pressure_near_ref #combine both into one mask
 
         if np.any(valid_mask):  # Ensure there are valid matches
             pressure_differences = np.abs(pres_profile[valid_mask] - ref_depth) #finding the difference from ref_depth in an array
@@ -900,11 +904,10 @@ def __find_changepoints__(filtered_data):
 
     return best_chpts, best_bic, bic_history, if_chpt
 
-def __calc_coefficients__(julian_day, orig_variable, change_points):
+def __calc_coefficients__(julian_day, anomalies, change_points):
     '''
     Calculate offset and drift for segmented data. Returns data frame.
     '''
-    reference_value = 43
     cycle_list = []
     offset_list = []
     drift_list = []
@@ -912,12 +915,12 @@ def __calc_coefficients__(julian_day, orig_variable, change_points):
     # Only calculate the before once
     cp0 = change_points[0]
     before_cp_time = np.array(julian_day[:cp0])
-    before_cp_var = np.array(orig_variable[:cp0])
+    before_cp_var = np.array(anomalies[:cp0])
 
     if len(before_cp_time) >= 2:
         m1, b1 = np.polyfit(before_cp_time, before_cp_var, 1)
         drift_before = m1 * 365
-        offset_before = (b1 + before_cp_time[0] * m1) - reference_value
+        offset_before = (b1 + before_cp_time[0] * m1)
         cycle_list.append(0)
         offset_list.append(offset_before)
         drift_list.append(drift_before)
@@ -925,12 +928,12 @@ def __calc_coefficients__(julian_day, orig_variable, change_points):
     # Loop over change points to compute "after" segments
     for cp in change_points:
         after_cp_time = np.array(julian_day[cp:])
-        after_cp_var = np.array(orig_variable[cp:])
+        after_cp_var = np.array(anomalies[cp:])
 
         if len(after_cp_time) >= 2:
             m2, b2 = np.polyfit(after_cp_time, after_cp_var, 1)
             drift_after = m2 * 365
-            offset_after = (b2 + after_cp_time[0] * m2) - reference_value
+            offset_after = (b2 + after_cp_time[0] * m2)
             # Save values for final profile calculation
             saved_m2 = m2
             saved_b2 = b2
@@ -941,7 +944,7 @@ def __calc_coefficients__(julian_day, orig_variable, change_points):
     #last profile
     cp_last = change_points[-1]
     drift_final = 0.0  #has no slope
-    offset_final = (saved_b2 + julian_day[len(orig_variable)-1] * saved_m2) - reference_value
+    offset_final = (saved_b2 + julian_day[len(anomalies)-1] * saved_m2)
     cycle_list.append(cp_last)
     offset_list.append(offset_final)
     drift_list.append(drift_final)
@@ -956,7 +959,8 @@ def __calc_coefficients__(julian_day, orig_variable, change_points):
 
 def __adj_vals__(coefficients_df, jul_day, original_var_data, gain = 1.0):
     '''
-    Calculates the adjusted values using the equation: var_adj=[variable-[offset + drift(JULD-JULD_PIVOT)/365]]/gain. 
+    Calculates the adjusted values using the equation:
+    var_adj=[variable-[offset + drift(JULD-JULD_PIVOT)/365]]/gain. 
     Returns adjusted values array.
     '''
     adjusted_vals = np.zeros_like(original_var_data, dtype=float)
@@ -1046,8 +1050,10 @@ def calc_adjustment(data, var='NITRATE', method='EsperLIR', ref_depth=1500, thre
     if verbose:
         print(f"Filtered original {var} data near depth {ref_depth} ± {threshold} m")
     
-    # Prepare reference data for PyEsper input
-    ref_data = __filter_ref_data__(data, ref_depth=ref_depth, threshold=threshold)
+    # Prepare reference data for PyEsper input (only for those profiles that have valid
+    # values (e.g., nitrate) near the reference depth)
+    ref_data = __filter_ref_data__(data, var_org_data[:,1],
+                                   ref_depth=ref_depth, threshold=threshold)
     if verbose:
         print("Reference data prepared for estimation")
         
@@ -1063,12 +1069,15 @@ def calc_adjustment(data, var='NITRATE', method='EsperLIR', ref_depth=1500, thre
     #Pulling the data
     jul_days = var_org_data[:, 1]
     org_var = var_org_data[:, 0]
+
+    # Compute the anomalies
+    anoms = org_var - estimated_vals[:,0]
     
     #Find the change points
-    changepoints, bic_val, bic_history, if_chpt = __find_changepoints__(org_var)
+    changepoints, bic_val, bic_history, if_chpt = __find_changepoints__(anoms)
 
-    #Calculate the coefficients 
-    coef_df = __calc_coefficients__(jul_days, org_var, changepoints)
+    #Calculate the coefficients
+    coef_df = __calc_coefficients__(jul_days, anoms, changepoints)
     if verbose:
         print(f"Detected {changepoints} changepoints; BIC = {bic_val:.2f}")
 
@@ -1078,4 +1087,5 @@ def calc_adjustment(data, var='NITRATE', method='EsperLIR', ref_depth=1500, thre
     if verbose:
         print("Adjustment process complete")
 
-    return var_org_data, ref_data, estimated_vals, changepoints, bic_history, if_chpt, coef_df, adjusted_vals, full_var_adjusted
+    return (var_org_data, ref_data, estimated_vals, changepoints, bic_history,
+            if_chpt, coef_df, adjusted_vals, full_var_adjusted)
