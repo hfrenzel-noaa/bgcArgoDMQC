@@ -469,9 +469,10 @@ def plot_no3_adj(julian_day, orig_var_data, estimated_var_data, change_points):
     jul_numeric = mdates.date2num(julian_dates)
 
     # Plot original and estimated data
-    plt.scatter(jul_numeric, orig_var_data, marker='s', facecolors='mediumblue',
+    colors = ['#e41a1c','#377eb8'] 
+    plt.scatter(jul_numeric, orig_var_data, marker='s', facecolors=colors[0],
                 edgecolors='black', alpha=0.8, label="Original Nitrate Data")
-    plt.scatter(jul_numeric, estimated_var_data, marker='s', facecolors='steelblue',
+    plt.scatter(jul_numeric, estimated_var_data, marker='s', facecolors=colors[1],
                 edgecolors='black', alpha=0.8, label="Estimated Nitrate Data")
 
     # check change points
@@ -492,10 +493,10 @@ def plot_no3_adj(julian_day, orig_var_data, estimated_var_data, change_points):
             cp_date = datetime.datetime(1950, 1, 1) + datetime.timedelta(days=cp_day)
             cp_numeric = mdates.date2num(cp_date)
     
-            plt.axvline(x=cp_numeric, color='orange', linestyle="--", linewidth=1.5, label="Change Point")
+            plt.axvline(x=cp_numeric, color='#ff7f00', linestyle="--", linewidth=1.5, label="Change Point")
 
     #Before first change point
-    colors = ['green', 'red', 'purple', 'pink', 'blue']  # Add more if needed
+    colors = ['#4daf4a', '#f781bf', '#a65628', '#999999', '#984ea3', '#e41a1c', '#dede00']  #https://gist.github.com/thriveth/8560036
     for i in range(len(valid_cps) - 1):
         start = valid_cps[i]
         end = valid_cps[i + 1]
@@ -507,7 +508,7 @@ def plot_no3_adj(julian_day, orig_var_data, estimated_var_data, change_points):
             segment_dates = mdates.date2num([datetime.datetime(1950, 1, 1) + datetime.timedelta(days=d) for d in segment_time])
             color = colors[i % len(colors)]  # Cycles through colors if segments > color list
             plt.plot(segment_dates, y_fit, color=color, linewidth=2, label=f"Segment {start}-{end}")
-            slope_lines.append(f"{start}-{end}: {m:.2f}")
+            slope_lines.append(f"{start}-{end}: {m:.2e}")
 
     # Fit for estimated data
     m3, b3 = np.polyfit(julian_day, estimated_var_data, 1)
