@@ -317,7 +317,7 @@ class sprof:
         glob = 'BR*.nc' if glob is None else glob
         files = (self.__Sprof__.parent / 'profiles').glob(glob)
 
-        gain = self.gain if gain is None else gain
+        #JP gain = self.gain if gain is None else gain
 
         io.export_delayed_files(self.__floatdict__, files, gain, data_mode=data_mode, **kwargs)
         self.__floatdict__ = current_float_dict
