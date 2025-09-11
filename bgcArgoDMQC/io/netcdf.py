@@ -294,7 +294,12 @@ def export_delayed_files(fdict, files, gain, data_mode='D', comment=None, equati
         cycle = int(fn.as_posix().split('_')[-1].split('.')[0].replace('D', ''))
         ix = fdict['CYCLE_GRID'] == cycle
         N = D_nc.dimensions['N_LEVELS'].size
-
+        
+        #if not gain close file and return
+        if not gain:
+            sys.stdout.write(f'No gain value provided for file - Skipping.\n')
+            D_nc.close()
+        
         # find index for DOXY along PARAMETER
         _, doxy_index = find_param(D_nc, 'DOXY')
 
